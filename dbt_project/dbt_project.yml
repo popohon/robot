@@ -14,8 +14,8 @@ clean-targets:
 models:
   robotics_lakehouse:
     silver:
-      +materialized: view
+      +materialized: table
       +schema: silver
     gold:
-      +materialized: view
+      +materialized: table
       +schema: gold
