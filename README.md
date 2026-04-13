@@ -89,6 +89,11 @@ make query-smoke
 
 # 4. Check cross-layer linkage
 make query-linkage
+
+# The cross-layer join on large tables can take a few seconds. Can also try to scope it recently:
+docker compose exec trino trino --execute \
+  "SELECT count(*) AS total, count(b.event_id) AS linked, round(cast(count(b.event_id) AS double)/count(*)*100,2) AS pct FROM iceberg.prod.telemetry_events t LEFT JOIN iceberg.prod.blob_index b ON t.event_id = b.event_id WHERE t.event_ts_corrected > current_timestamp - INTERVAL '10' MINUTE"
+
 ```
 
 ### Service UIs
