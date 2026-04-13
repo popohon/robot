@@ -145,6 +145,8 @@ Open `docker-compose.yml` briefly:
 ```bash
 make logs-producer    # watch events being produced
 ```
+> it only prints output when a record is rejected by validation (which is rare since the simulated data is within bounds)
+> to confirm it's working, check Kafka UI → telemetry.raw topic → message count growing (http://localhost:8081)
 
 ### What can you see and inspect!
 
@@ -277,9 +279,15 @@ make query-linkage       # linkage percentage
 
 ### What to see in Trino
 
-Open **[http://localhost:8080](http://localhost:8080)** (Trino UI). Run queries directly:
+Open **[http://localhost:8080](http://localhost:8080)** (Trino UI).
+The Trino UI is usefulto show that queries are running and how Iceberg partition pruning reduces the amount of data scanned
+
+Run queries directly:
 
 **1. Basic row counts**
+```
+docker compose exec trino trino
+```
 
 ```sql
 SELECT count(*) FROM iceberg.prod.telemetry_events;
@@ -469,18 +477,6 @@ curl -s http://localhost:19120/api/v1/trees/tree/main/log | python3 -m json.tool
 ### Why this matters
 
 > Nessie is a governance tool. Every DDL change is audited. You can tag datasets for ML reproducibility ('training-data-v3'). You can branch for safe schema migrations
-
-It returns JSON. It Sees Nessie's server config: default branch, version, supported API features. This confirms Nessie is running. There's no web UI; Nessie is a REST API catalog, not a dashboard. The value is in what it enables: git-like branching, audit logging, atomic multi-table commits.
-
-To see more useful info, try:
-
-```bash
-# List all branches/tags
-curl -s http://localhost:19120/api/v1/trees | python3 -m json.tool
-
-# See commit log on main
-curl -s http://localhost:19120/api/v1/trees/tree/main/log | python3 -m json.tool
-```
 
 ---
 
