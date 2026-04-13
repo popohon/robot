@@ -1,0 +1,229 @@
+services:
+  # ---------- Kafka (KRaft mode - no Zookeeper) ----------
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    hostname: kafka
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://kafka:9092,CONTROLLER://kafka:9093,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 72
+      KAFKA_NUM_PARTITIONS: 24
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "kafka:9092", "--list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ---------- Kafka UI (visual topic/message inspection) ----------
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8081:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: robotics-lakehouse
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+
+  # ---------- MinIO (S3-compatible object storage) ----------
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-02-15T10-36-16Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set local http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb -p local/lakehouse || true;
+      /usr/bin/mc mb -p local/raw-blobs || true;
+      exit 0;
+      "
+
+  # ---------- Nessie (Iceberg catalog with git-like versioning) ----------
+  nessie:
+    image: ghcr.io/projectnessie/nessie:0.76.6
+    ports:
+      - "19120:19120"
+    environment:
+      NESSIE_VERSION_STORE_TYPE: IN_MEMORY
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:19120/api/v1/config"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ---------- Trino (SQL query engine over Iceberg) ----------
+  trino:
+    image: trinodb/trino:445
+    depends_on:
+      minio:
+        condition: service_healthy
+      nessie:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./trino/catalog/iceberg.properties:/etc/trino/catalog/iceberg.properties:ro
+
+  # ---------- Spark Structured Streaming (Kafka -> Iceberg) ----------
+  spark-job:
+    image: spark:3.5.8-scala2.12-java17-python3-ubuntu
+    user: root   # needed for pip install inside the container
+    depends_on:
+      kafka:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      nessie:
+        condition: service_healthy
+    volumes:
+      - ./pipeline:/opt/pipeline
+      - spark_ivy_cache:/tmp/ivy2
+    command: >
+      /bin/bash -c "
+      pip install --quiet kafka-python-ng &&
+      /opt/spark/bin/spark-submit
+      --conf spark.jars.ivy=/tmp/ivy2
+      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.8,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.2,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262,org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.76.6
+      /opt/pipeline/spark_stream.py
+      "
+
+  # ---------- Producer (simulates 200-robot fleet) ----------
+  producer:
+    build: ./pipeline
+    depends_on:
+      kafka:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    command: ["python", "producer.py"]
+
+  # ---------- Quality checks (SLA enforcement via Trino) ----------
+  quality-check:
+    build: ./pipeline
+    depends_on:
+      - trino
+      - spark-job
+    environment:
+      TRINO_HOST: trino
+      TRINO_PORT: 8080
+      TRINO_CATALOG: iceberg
+      TRINO_SCHEMA: prod
+      CHECK_INTERVAL_SEC: 60
+      FRESHNESS_WARN_SEC: 60
+      FRESHNESS_CRIT_SEC: 120
+      MIN_EVENTS_LAST_5M: 100
+    command: ["python", "quality_check.py"]
+
+  # ---------- Reconciler (cross-layer linkage repair) ----------
+  reconciler:
+    build: ./pipeline
+    depends_on:
+      - trino
+      - spark-job
+    environment:
+      TRINO_HOST: trino
+      TRINO_PORT: 8080
+      RECONCILE_INTERVAL_SEC: 120
+    command: ["python", "reconciler.py"]
+
+  # ---------- Backfill (on-demand historical data generation) ----------
+  backfill:
+    build: ./pipeline
+    depends_on:
+      kafka:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+      MINIO_ENDPOINT: http://minio:9000
+    command: ["python", "backfill.py", "--hours-back", "24", "--events-per-second", "200"]
+    profiles: ["backfill"]
+
+  # ---------- dbt (Silver/Gold layer transforms via Trino) ----------
+  dbt:
+    build: ./dbt_project
+    depends_on:
+      - trino
+    volumes:
+      - ./dbt_project:/opt/dbt
+    working_dir: /opt/dbt
+    environment:
+      TRINO_HOST: trino
+      TRINO_PORT: 8080
+    profiles: ["dbt"]
+    command: ["dbt", "run", "--profiles-dir", "/opt/dbt"]
+
+  # ---------- Compaction / table maintenance (on-demand) ----------
+  compaction:
+    build: ./pipeline
+    depends_on:
+      trino:
+        condition: service_started
+    environment:
+      TRINO_HOST: trino
+      TRINO_PORT: 8080
+    command: ["python", "compaction.py"]
+    profiles: ["compact"]
+
+  # ---------- Peak traffic simulator (on-demand) ----------
+  peak-simulator:
+    build: ./pipeline
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+    command: ["python", "peak_simulator.py", "--duration", "120"]
+    profiles: ["peak"]
+
+  # ---------- Nessie branching demo (on-demand) ----------
+  nessie-demo:
+    build: ./pipeline
+    depends_on:
+      nessie:
+        condition: service_healthy
+      trino:
+        condition: service_started
+    environment:
+      NESSIE_URI: http://nessie:19120/api/v1
+      TRINO_HOST: trino
+      TRINO_PORT: 8080
+    profiles: ["nessie-demo"]
+    command: ["python", "nessie_demo.py"]
+
+volumes:
+  minio_data:
+  spark_ivy_cache:

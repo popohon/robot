@@ -1,0 +1,21 @@
+name: robotics_lakehouse
+version: '1.0.0'
+config-version: 2
+profile: robotics_lakehouse
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+
+clean-targets:
+  - target
+  - dbt_packages
+
+models:
+  robotics_lakehouse:
+    silver:
+      +materialized: view
+      +schema: silver
+    gold:
+      +materialized: view
+      +schema: gold

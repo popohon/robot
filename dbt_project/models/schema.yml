@@ -1,0 +1,59 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: "Raw Iceberg tables written by Spark Structured Streaming"
+    database: iceberg
+    schema: prod
+    tables:
+      - name: telemetry_events
+        description: "Structured sensor telemetry (Bronze layer)"
+        columns:
+          - name: event_id
+            tests:
+              - not_null
+          - name: robot_id
+            tests:
+              - not_null
+          - name: event_ts_corrected
+            tests:
+              - not_null
+
+      - name: blob_index
+        description: "Blob metadata and cross-reference index (Bronze layer)"
+        columns:
+          - name: event_id
+            tests:
+              - not_null
+          - name: blob_uri
+            tests:
+              - not_null
+          - name: checksum_sha256
+            tests:
+              - not_null
+
+models:
+  - name: telemetry_validated
+    description: "Silver: domain-validated telemetry with quality flags"
+    columns:
+      - name: event_id
+        tests:
+          - not_null
+      - name: quality_flag
+        tests:
+          - accepted_values:
+              values: ['VALID', 'TEMP_OUT_OF_RANGE', 'TORQUE_OUT_OF_RANGE', 'ANGLE_OUT_OF_RANGE']
+
+  - name: blob_linked
+    description: "Silver: blobs successfully linked to telemetry via event_id"
+    columns:
+      - name: event_id
+        tests:
+          - not_null
+          - unique
+
+  - name: robot_hourly_stats
+    description: "Gold: per-robot hourly aggregations for dashboards"
+
+  - name: linkage_report
+    description: "Gold: cross-layer consistency health over time"
