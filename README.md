@@ -1,3 +1,5 @@
+# Code Walkthrough click [here](https://github.com/popohon/robot/blob/main/docs/CODE_WALKTHROUGH.md) 
+
 # Robotics Data Lakehouse — Assignment 1 Demo
 
 A fully local, Docker-based demo of a two-layer data lakehouse for a 200-robot fleet.
