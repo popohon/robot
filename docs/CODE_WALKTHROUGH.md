@@ -114,9 +114,9 @@ Notes:
 producer.py runs an infinite while True loop with a 50ms sleep between events. It produces data forever until you stop it.
 
 Same for the consumers:
-•  spark-job : streams continuously (.awaitTermination())
-•  reconciler : runs every 2 minutes in a loop
-•  quality-check : runs every 60 seconds in a loop
+- spark-job : streams continuously (.awaitTermination())
+- reconciler : runs every 2 minutes in a loop
+- quality-check : runs every 60 seconds in a loop
 
 To stop everything: make down
 To stop just the producer (keep querying existing data): docker compose stop producer
