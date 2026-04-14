@@ -93,6 +93,7 @@ Load profile:
 make up          # builds images + starts all 9 services
 make ps          # See what's running
 ```
+> please wait around 2 minutes after running make up
 
 ### What to see
 
@@ -331,7 +332,8 @@ ORDER BY event_ts_corrected DESC
 LIMIT 5;
 ```
 
-> The `drift_applied_sec` column Sees how much correction was applied. If robot-042 has +300ms drift, you'll see ~0.3 seconds difference. This is the heartbeat-based correction in action
+> The `drift_applied_sec` column
+> Sees how much correction was applied. If robot-042 has +300ms drift, you'll see ~0.3 seconds difference. This is the heartbeat-based correction in action
 
 **4. Partition pruning demo**
 
